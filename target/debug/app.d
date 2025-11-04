@@ -1,1 +1,0 @@
-/home/dysha/bitcoin-wallet/target/debug/app: /home/dysha/bitcoin-wallet/app/src/main.rs /home/dysha/bitcoin-wallet/crates/api/src/lib.rs /home/dysha/bitcoin-wallet/crates/db/migrations/20251031205932_users_up.sql /home/dysha/bitcoin-wallet/crates/db/src/lib.rs /home/dysha/bitcoin-wallet/crates/models/src/lib.rs
