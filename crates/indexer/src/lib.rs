@@ -34,7 +34,7 @@ pub async fn run_indexer(db_repo: Arc<dyn DbRepository>, network: Network) -> Re
     let mut tracked_scripts: std::collections::HashMap<Script, i32> = std::collections::HashMap::new();
     let mut last_address_sync = Instant::now();
     let address_sync_interval = Duration::from_secs(30);
-    let mut latest_seen_height: u64 = 900_000;
+    let mut latest_seen_height: u64 = 0;
     println!("Nakamoto started. Waiting for events...");
     let handle_for_commands = handle.clone();
 
@@ -60,10 +60,11 @@ pub async fn run_indexer(db_repo: Arc<dyn DbRepository>, network: Network) -> Re
                         if let Err(e) = handle_for_commands.watch(scripts_to_watch.clone().into_iter()) {
                             eprintln!("Error updating watchlist: {}", e);
                         }
-                        let rescan_range =  500_000u64..=latest_seen_height;
+                        let rescan_range =  1u64..=latest_seen_height;
                         if let Err(e) = handle_for_commands.rescan(rescan_range, scripts_to_watch.into_iter()) {
                             eprintln!("Error requesting rescan: {}", e);
-                        } else {
+                        } 
+                        else {
                             println!("Requested rescan up to height {}", latest_seen_height);
                         }
                     }
@@ -81,8 +82,7 @@ pub async fn run_indexer(db_repo: Arc<dyn DbRepository>, network: Network) -> Re
                                 eprintln!("Error requesting block {}: {}", block_hash, e);
                             }
                         }
-                        Ok(false) => {
-                        }
+                        Ok(false) => {}
                         Err(e) => {
                             eprintln!("Error matching filter for block {}: {}", block_hash, e);
                         }
@@ -141,7 +141,7 @@ fn process_block(
                 });
             }
         }
-        
+
         if !my_outputs.is_empty() {
             let new_tx = NewTransaction {
                 txid: txid.clone(),
@@ -154,7 +154,8 @@ fn process_block(
             TokioHandle::current().block_on(async move {
                 if let Err(e) = db.save_transaction(new_tx, &my_outputs).await {
                     eprintln!("DB Error saving tx {}: {}", txid, e);
-                } else {
+                }
+                else {
                     println!(" Transaction {} saved to DB", txid);
                 }
             });
