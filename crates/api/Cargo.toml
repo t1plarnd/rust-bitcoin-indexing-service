@@ -9,21 +9,20 @@ models = {path = "../models"}
 db = {path = "../db"}
 indexer = {path = "../indexer"}
 
-alloy = { workspace = true }
-alloy-sol-types = { workspace = true }
-alloy-contract = { workspace = true }
-alloy-dyn-abi = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
 sqlx = { workspace = true }
 eyre = { workspace = true }
 dotenv = { workspace = true }
-async-trait = { workspace = true }
+async-trait = "0.1"
 serde = { workspace = true }
 bcrypt = { workspace = true }
 jsonwebtoken = { workspace = true }
 chrono = { workspace = true }
 serde_json = { workspace = true }
-bdk = { workspace = true }
+log = { workspace = true }
+crossbeam-channel = { workspace = true }
+nakamoto-client = { workspace = true }
 bitcoin = { workspace = true }
+nakamoto-net-poll = { workspace = true }
