@@ -1,1 +1,1 @@
-bitcoin wallet
+bitcoin indexer

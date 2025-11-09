@@ -3,8 +3,10 @@ use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use models::Config;
 use api::run;
+use indexer::run_indexer;
 use api::AppState;
 use db::{DbRepository, PgRepository};
+use nakamoto_client::Network;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -26,13 +28,17 @@ async fn main() -> Result<()> {
 
     let db_repo_impl = PgRepository::new(pool.clone());
     let db_repo: Arc<dyn DbRepository> = Arc::new(db_repo_impl);
+    let network = Network::Mainnet;
+    let indexer_repo = db_repo.clone(); 
+
+    tokio::spawn(async move {
+       let _ = run_indexer(indexer_repo, network).await;
+    });
     let app_state = AppState { 
         db_repo, 
         config: Arc::new(app_config.clone())
     };
-
-    println!("Starting API server...");
-    run(app_state, app_config).await?;
+    run(app_state).await?;
 
     Ok(())
 }

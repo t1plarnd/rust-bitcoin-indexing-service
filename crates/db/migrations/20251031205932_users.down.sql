@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS utxos;
+DROP TABLE IF EXISTS tracked_addresses;
+DROP TABLE IF EXISTS transactions;
+DROP TABLE IF EXISTS users;
