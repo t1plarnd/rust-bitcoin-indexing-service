@@ -11,10 +11,8 @@ use std::str::FromStr;
 use tokio::runtime::Handle as TokioHandle;
 use models::{NewTransaction, NewTxOutput};
 
-pub async fn run_indexer(db_repo: Arc<dyn DbRepository>, network: Network) -> Result<()> {
+pub async fn run_indexer(db_repo: Arc<dyn DbRepository>, network: Network, root: PathBuf) -> Result<()> {
     println!("Starting Nakamoto SPV client on {:?}...", network);
-    
-    let root = PathBuf::from("./nakamoto-db");
     let config = Config { 
         root, 
         network,
@@ -34,7 +32,7 @@ pub async fn run_indexer(db_repo: Arc<dyn DbRepository>, network: Network) -> Re
     let mut tracked_scripts: std::collections::HashMap<Script, i32> = std::collections::HashMap::new();
     let mut last_address_sync = Instant::now();
     let address_sync_interval = Duration::from_secs(30);
-    let mut latest_seen_height: u64 = 0;
+    let mut latest_seen_height: u64 = 900_000;
     println!("Nakamoto started. Waiting for events...");
     let handle_for_commands = handle.clone();
 
@@ -60,13 +58,11 @@ pub async fn run_indexer(db_repo: Arc<dyn DbRepository>, network: Network) -> Re
                         if let Err(e) = handle_for_commands.watch(scripts_to_watch.clone().into_iter()) {
                             eprintln!("Error updating watchlist: {}", e);
                         }
-                        let rescan_range =  1u64..=latest_seen_height;
+                        let rescan_range =  500_000u64..=latest_seen_height;
                         if let Err(e) = handle_for_commands.rescan(rescan_range, scripts_to_watch.into_iter()) {
                             eprintln!("Error requesting rescan: {}", e);
                         } 
-                        else {
-                            println!("Requested rescan up to height {}", latest_seen_height);
-                        }
+                        else println!("Requested rescan up to height {}", latest_seen_height);
                     }
                 }
                 last_address_sync = Instant::now();
@@ -91,10 +87,51 @@ pub async fn run_indexer(db_repo: Arc<dyn DbRepository>, network: Network) -> Re
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
-            match blocks_receiver.recv_timeout(Duration::from_secs(0)) {
+            match blocks_receiver.recv_timeout(Duration::from_secs(1)) {
                 Ok((block, height)) => {
-                    latest_seen_height = latest_seen_height.max(height as u64);
+                    let block_h = height as u64;
+                    latest_seen_height = latest_seen_height.max(block_h);
                     println!(" Block received at height {} with {} transactions", height, block.txdata.len());
+                    let mut fork_height: Option<u64> = None;
+                    match handle_for_commands.find_branch(&block.block_hash()) {
+                        Ok(Some((h, _headers))) => {
+                            fork_height = Some(h as u64);
+                        }
+                        Ok(None) => {
+                        }
+                        Err(e) => {
+                            eprintln!("find_branch error: {}", e);
+                        }
+                    }
+                    let fork_h = fork_height.unwrap_or_else(|| block_h.saturating_sub(6));
+                    let db_clone = db_repo.clone();
+                    let tracked_scripts_clone = tracked_scripts.keys().cloned().collect::<Vec<_>>();
+                    let need_reconcile = TokioHandle::current().block_on(async move {
+                        match db_clone.get_txids_since(fork_h as i32).await {
+                            Ok(txids) => {
+                                if !txids.is_empty() {
+                                    if let Err(e) = db_clone.delete_transactions_and_utxos(&txids).await {
+                                        eprintln!("DB error deleting txs during reorg reconcile: {}", e);
+                                    }
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("DB error checking txids for reorg: {}", e);
+                                false
+                            }
+                        }
+                    });
+                    if need_reconcile {
+                        let rescan_range = fork_h..=latest_seen_height;
+                        if let Err(e) = handle_for_commands.rescan(rescan_range, tracked_scripts_clone.into_iter()) {
+                            eprintln!("Error requesting rescan during reorg reconcile: {}", e);
+                        } else {
+                            println!("Requested rescan for fork range {}..={}", fork_h, latest_seen_height);
+                        }
+                    }
                     process_block(&block, height.try_into().unwrap(), &tracked_scripts, &db_repo);
                 }
                 Err(RecvTimeoutError::Timeout) => {}
@@ -129,7 +166,6 @@ fn process_block(
                 }
             });
         }
-
         for (vout, output) in tx.output.iter().enumerate() {
             if let Some(&address_id) = tracked_scripts.get(&output.script_pubkey) {
                 println!("FOUND TX: {} | vout: {} | value: {}", txid, vout, output.value);
@@ -141,7 +177,6 @@ fn process_block(
                 });
             }
         }
-
         if !my_outputs.is_empty() {
             let new_tx = NewTransaction {
                 txid: txid.clone(),

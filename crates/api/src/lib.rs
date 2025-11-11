@@ -61,7 +61,7 @@ pub async fn run(app_state: AppState) -> Result<()> {
     let public_routes = Router::new()
         .route("/login", post(login))
         .route("/register", post(register));
-
+        
     let protected_routes = Router::new()
         .route("/addresses/:address/balance", get(get_balance))
         .route("/addresses/:address/utxos", get(get_utxos))

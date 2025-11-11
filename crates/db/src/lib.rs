@@ -26,6 +26,8 @@ pub trait DbRepository: Send + Sync {
     async fn get_balance_for_user_address(&self, user_id: i32, address: &str) -> Result<i64, eyre::Error>;
     async fn get_transaction_history_for_user_address(&self, user_id: i32, address: &str) -> Result<Vec<UtxoResponse>, eyre::Error>;
     async fn mark_utxo_spent(&self, txid: &str, vout: i32) -> Result<(), eyre::Error>;
+    async fn get_txids_since(&self, height: i32) -> Result<Vec<String>, eyre::Error>;
+    async fn delete_transactions_and_utxos(&self, txids: &[String]) -> Result<(), eyre::Error>;
 }
 
 #[derive(Clone)]
@@ -239,5 +241,32 @@ impl DbRepository for PgRepository {
 
         Ok(transactions)
       
+    }
+    async fn get_txids_since(&self, height: i32) -> Result<Vec<String>, eyre::Error> {
+        let rows = sqlx::query_scalar!(
+            r#"SELECT txid FROM transactions WHERE block_height >= $1"#,
+            height
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+    async fn delete_transactions_and_utxos(&self, txids: &[String]) -> Result<(), eyre::Error> {
+        if txids.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM utxos WHERE txid = ANY($1)")
+            .bind(txids)
+            .execute(&mut *tx)
+            .await?;
+
+        sqlx::query("DELETE FROM transactions WHERE txid = ANY($1)")
+            .bind(txids)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+        Ok(())
     }
 }

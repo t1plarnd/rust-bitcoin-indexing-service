@@ -1,13 +1,15 @@
 use serde::{Deserialize, Serialize};
 use dotenv::dotenv;
 use eyre::Result;
-use std::env;
+use std::{env, path::PathBuf};
 use sqlx::FromRow;
+
 
 #[derive(Debug, Clone)]
 pub struct Config {
     pub database_url: String,
     pub jwt_secret: String,
+    pub nakamoto_path: PathBuf,
     
 }
 impl Config {
@@ -15,9 +17,11 @@ impl Config {
         dotenv().ok();
         let database_url = env::var("DATABASE_URL")?;
         let jwt_secret = env::var("JWT_STRING")?;
+        let nakamoto_path = env::var("NAKAMOTO_PATH")?;
         Ok(Config {
             database_url,
             jwt_secret,
+            nakamoto_path: nakamoto_path.into(),
         })
     }
 }

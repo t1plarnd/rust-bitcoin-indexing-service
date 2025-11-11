@@ -30,9 +30,10 @@ async fn main() -> Result<()> {
     let db_repo: Arc<dyn DbRepository> = Arc::new(db_repo_impl);
     let network = Network::Mainnet;
     let indexer_repo = db_repo.clone(); 
-
+    let path = app_config.nakamoto_path.clone();
+    
     tokio::spawn(async move {
-       let _ = run_indexer(indexer_repo, network).await;
+       let _ = run_indexer(indexer_repo, network, path).await;
     });
     let app_state = AppState { 
         db_repo, 
