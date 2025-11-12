@@ -5,8 +5,8 @@ edition = "2024"
 
 [dependencies]
 
-models = {path = "../models"}
-
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
