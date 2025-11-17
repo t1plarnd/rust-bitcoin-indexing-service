@@ -206,6 +206,7 @@ impl DbRepository for PgRepository {
             .await?;
         }
         tx.commit().await?;
+        
         Ok(())
     }
 
