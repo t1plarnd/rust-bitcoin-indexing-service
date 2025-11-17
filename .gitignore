@@ -3,7 +3,7 @@
 nakamoto-db/
 debug/
 target/
-
+target
 Cargo.lock
 
 **/*.rs.bk
