@@ -34,9 +34,9 @@ Uses Docker Compose to run the entire stack (API, Database, Nginx).
 
 ## API Endpoints
 
-* POST/addresses/:address/balance - Get balance of all unspent utxos for user by list of addresses
-* POST /addresses/:address/utxos - Get list of active(unspen) utxos for user by list of addresses
-* POST /addresses/txs - Get transaction history by given list of addresses for user
+* POST/addresses/balance - Get balance of all unspent utxos for user by list of addresses
+* POST /addresses/utxos - Get list of active(unspen) utxos for user by list of addresses
+* POST /addresses/txs - Get transaction history for user by list of addresses
 * POST /addresses - Set new address to track for user
 * GET /addresses - Get list of addresses tracked by user
 * POST /register - Create new user
