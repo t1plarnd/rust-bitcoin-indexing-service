@@ -1,6 +1,6 @@
 # Bitcoin Indexer in Rust
 
-This project indexes Bitcoin transactions using rpc requests, fetch them into a PostgreSQL database and provides a REST API to retrieve them.
+This project indexes Bitcoin transactions using rpc requests(basad on blockstream.info rpc), fetch them into a PostgreSQL database and provides a REST API to retrieve them.
 
 The project uses `axum`, `sqlx`, `rust-bitcoin`, `nginx` and `docker-compose`.
 
