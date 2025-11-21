@@ -3,9 +3,8 @@ use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use api::run;
 use indexer::run_indexer;
-use handling::{AppState, Config};
-use db::{DbRepository, PgRepository};
-use nakamoto_client::Network;
+use db::DbRepository;
+use db::models::{AppState, Config, PgRepository};
 use tracing::{info, error};
 
 #[tokio::main]
@@ -17,7 +16,7 @@ async fn main() -> Result<()> {
         .max_connections(5)
         .connect(&app_config.database_url)
         .await?;
-   info!("Database connected.");
+    info!("Database connected.");
     match sqlx::migrate!("../crates/db/migrations").run(&pool).await {
         Ok(_) => info!("Migrations applied successfully."),
         Err(e) => {
@@ -28,19 +27,22 @@ async fn main() -> Result<()> {
     }
     let db_repo_impl = PgRepository::new(pool.clone());
     let db_repo: Arc<dyn DbRepository> = Arc::new(db_repo_impl);
-    let network = Network::Mainnet;
-    let indexer_repo = db_repo.clone(); 
-    let path = app_config.nakamoto_path.clone();
-
+    let app_state_indx = AppState { 
+        db_repo: db_repo.clone(), 
+        config: Arc::new(app_config.clone())
+    };
+    info!("Indexer running.");
     tokio::spawn(async move {
-       let _ = run_indexer(indexer_repo, network, path).await;
+        if let Err(e) = indexer::run_indexer(app_state_indx).await {
+            tracing::error!("Indexer crashed: {}", e);
+        }
     });
-
-    let app_state = AppState { 
+    let app_state_api = AppState { 
         db_repo, 
         config: Arc::new(app_config.clone())
     };
-    run(app_state).await?;
+    info!("Api running.");
+    run(app_state_api).await?;
 
     Ok(())
 }

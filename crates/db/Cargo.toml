@@ -15,3 +15,9 @@ serde = { workspace = true }
 bcrypt = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+dotenv = { workspace = true }
+axum = { workspace = true }
+reqwest = { workspace = true }
+bitcoin_hashes = { workspace = true }
+bitcoin = { workspace = true }
+hex = { workspace = true }

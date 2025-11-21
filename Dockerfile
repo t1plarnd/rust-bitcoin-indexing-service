@@ -9,12 +9,14 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    openssl \
+    libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 RUN useradd -m -u 1000 appuser && \
-    mkdir -p /app/data/nakamoto_db && \
+    mkdir -p /app/data && \
     chown -R appuser:appuser /app
 
 USER appuser

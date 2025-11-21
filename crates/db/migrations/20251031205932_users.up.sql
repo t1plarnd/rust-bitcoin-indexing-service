@@ -17,19 +17,21 @@ CREATE TABLE transactions (
     block_height INTEGER,
     block_hash VARCHAR(64),
     block_time TIMESTAMP,
-    received_at TIMESTAMP DEFAULT NOW()
+    vouts JSONB,
+    vins JSONB
 );
 CREATE TABLE utxos (
     utxo_id SERIAL PRIMARY KEY,
     address_id INTEGER NOT NULL REFERENCES tracked_addresses(address_id) ON DELETE CASCADE,
     txid VARCHAR(64) NOT NULL REFERENCES transactions(txid) ON DELETE CASCADE,
-    vout INTEGER NOT NULL,
+    vout_idx INTEGER NOT NULL, 
     value BIGINT NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'unspent',
-    UNIQUE(txid, vout)
+    block_height INTEGER,
+    is_spent BOOLEAN NOT NULL DEFAULT FALSE,
+    UNIQUE(txid, vout_idx)
 );
-
-CREATE INDEX idx_utxos_on_address_id ON utxos(address_id);
+CREATE INDEX idx_utxos_address ON utxos(address_id);
+CREATE INDEX idx_utxos_txid_vout ON utxos(txid, vout_idx);
 
 
 

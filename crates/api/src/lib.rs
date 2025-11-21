@@ -1,31 +1,35 @@
 use axum::{
     body::Body,
-    extract::{Extension, State}, 
-        extract::Path,
+    extract::State, 
     http::{header, Request, StatusCode},
     middleware::{self, Next},
-    response::{IntoResponse, Response},
+    response::Response,
     routing::{get, post},
-    Json, Router,
-};
-use db::{DbRepository, TrackedAddress, RegisterData, UtxoResponse }; 
+    Router};
 use eyre::Result;
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use handling::{AppState, Claims, ApiError, Config};
-use handling::{login, register, get_balance, get_utxos, get_tracked_addr, track_new_address, get_transaction_history};
-use tracing::{info, error};
+use handling::{
+    login, 
+    register, 
+    get_balance, 
+    get_utxos, 
+    get_tracked_addr, 
+    track_new_addresses, 
+    get_transaction_history};
+use db::models::{AppState, Claims};
+use tracing::info;
 
 pub async fn run(app_state: AppState) -> Result<()> {
     let public_routes = Router::new()
         .route("/login", post(login))
         .route("/register", post(register));    
     let protected_routes = Router::new()
-        .route("/addresses/:address/balance", get(get_balance))
-        .route("/addresses/:address/utxos", get(get_utxos))
+        .route("/addresses/balance", post(get_balance))
+        .route("/addresses/utxos", post(get_utxos))
         .route("/addresses/txs", post(get_transaction_history))
         .route("/addresses", get(get_tracked_addr)) 
-        .route("/addresses", post(track_new_address)) 
+        .route("/addresses", post(track_new_addresses)) 
         .layer(middleware::from_fn_with_state(
             app_state.clone(),
             auth_middleware

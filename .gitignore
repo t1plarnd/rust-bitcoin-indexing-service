@@ -5,15 +5,10 @@ debug/
 target/
 target
 Cargo.lock
-
 **/*.rs.bk
-
 *.pdb
-
 /logs
 *.log
-
 .idea/
 .vscode/
-
 logs/*
