@@ -23,7 +23,7 @@ Uses Docker Compose to run the entire stack (API, Database, Nginx).
     ```bash
     cp .env.example .env
     ```
-    You need to edit .env and insert your actual HTTP_INFURA_URL.
+    You need to edit .env 
 
 4.  **Start the service:**
     ```bash
