@@ -139,6 +139,7 @@ pub struct Config {
     pub port: u16,
     pub ip_musk: Option<String>,
     pub network: bool,
+    pub reorg_limit: u16,
     
 }
 
@@ -147,18 +148,21 @@ impl Config {
         dotenv().ok();
         let database_url = env::var("DATABASE_URL")?;
         let jwt_secret = env::var("JWT_STRING")?;
-        let port: u16 = env::var("API_PORT")?.parse()?;
+        let port: u16  = env::var("API_PORT")?.parse()?;
         let ip_musk = env::var("IP_MASK").ok();
         let network: bool = match env::var("MAINNET") {
             Ok(val) => val.parse().unwrap_or(true),
             Err(_) => true,
         };
+        let reorg_limit: u16= env::var("MAX_REORG_CAPACITY")?.parse()?;
+
         Ok(Config {
             database_url,
             jwt_secret,
             port,   
             ip_musk,  
             network,
+            reorg_limit,
         })
     }
 }

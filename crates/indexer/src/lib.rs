@@ -5,15 +5,14 @@ use tracing::{info, error, warn};
 use db::responses::{NewTransaction, UtxoResponse};
 use db::models::{
     AppState, 
-    Config, 
     MerkleProof, 
     BlockstreamClient};
-use serde::{Deserialize, Serialize};
 
 pub async fn run_indexer(state: AppState) -> Result<()> {
     let api = BlockstreamClient::new(state.config.network); 
     let mut last_height = state.db_repo.get_last_indexed_height().await?; 
     let mut last_block_hash = state.db_repo.get_last_indexed_block_hash(last_height).await?;
+    let max_reorg_capacity= state.config.reorg_limit;
 
     loop {
         let curr_height = api.get_tip_height().await?;
@@ -23,15 +22,39 @@ pub async fn run_indexer(state: AppState) -> Result<()> {
             let header = api.get_block_header(&hash).await?;
             if header.prev_blockhash.to_string() != last_block_hash {
                 warn!("Blockchain reorganization detected at height {}", next_height);
+                let mut counter = 0;
+                let mut hash2 = header.prev_blockhash.to_string();
+                let hash2B = header.prev_blockhash.to_string();
+                let mut hash1 = last_block_hash;
 
+                while hash1 != hash2 {
+                    if counter == 6 {
+                        panic!("Reorg is bigger than {} blocks!!!", max_reorg_capacity);
+                        counter = 0;
+                        break;
+                    }
+                    counter+=1;
+                    let mut extracoutner = 0;
+                    hash2 = hash2B.clone();
+
+                    while hash1 != hash2{
+                        if extracoutner == max_reorg_capacity{break;}
+                        extracoutner+=1;
+                        hash2 = api.get_block_header(&hash2).await?.prev_blockhash.to_string();
+                        tokio::time::sleep(tokio::time::Duration::from_millis(228)).await;
+                        if hash1 == hash2 {break;}
+                    }
+                    if hash1 == hash2 {break;}
+                    hash1 = api.get_block_header(&hash1).await?.prev_blockhash.to_string();
+                    tokio::time::sleep(tokio::time::Duration::from_millis(228)).await;
+                }
                 let list = state.db_repo.get_all_tracked_addresses().await?;
-                let safe_height = if last_height > 6 { last_height - 6 } else { 0 };
-                state.db_repo.delete_transactions_and_utxos(list, safe_height as i32).await?;
-                last_height = safe_height;
-                last_block_hash = api.get_block_hash(safe_height).await?; 
-                
+                state.db_repo.delete_transactions_and_utxos(list, counter as i32).await?;
+                last_height -= counter;
+                last_block_hash = api.get_block_hash(last_height).await?; 
                 continue;
             }
+
             let target = header.target();
             if let Err(e) = header.validate_pow(&target) {
                 error!("Invalid PoW for block {}: {}", next_height, e);
@@ -41,7 +64,6 @@ pub async fn run_indexer(state: AppState) -> Result<()> {
 
             info!("Header {} is valid. Checking transactions...", next_height);
             process_block(&state, &api, &hash, &header).await?;
-
 
             last_height = next_height;
             last_block_hash = hash;
