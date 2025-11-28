@@ -1,20 +1,22 @@
 [package]
-name = "api"
+name = "p2p-indexer"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-handling = {path = "../handling"}
 db = {path = "../db"}
 
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tokio = { workspace = true }
-axum = { workspace = true }
-tower-http = { workspace = true }
 eyre = { workspace = true }
-serde = { workspace = true }
-jsonwebtoken = { workspace = true }
+chrono = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+crossbeam-channel = { workspace = true }
 bitcoin = { workspace = true }
+serde = { workspace = true }
+reqwest = { workspace = true }
+bitcoin_hashes = { workspace = true }
+hex = { workspace = true }
+rand = {workspace = true}

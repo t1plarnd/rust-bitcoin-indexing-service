@@ -2,20 +2,17 @@ use async_trait::async_trait;
 use eyre::Result;
 use sqlx::{Error as SqlxError};
 use sqlx::Row;
-use sqlx::types::Json;
 use tokio::task::spawn_blocking;
 use bcrypt::{hash, verify};
-
+use bitcoin::BlockHash;
+use std::str::FromStr;
 pub mod models;
 pub mod responses;
-
-use models::PgRepository;
+use models::{PgRepository, InfoResponse, UtxoPayload};
 use responses::{
     TrackedAddress, 
     AddressPayload, 
     RegisterData,
-    UtxoResponse,
-    NewTransaction, 
     AddressUtxoResponse,
     BalanceResponse};
 
@@ -27,16 +24,15 @@ pub trait DbRepository: Send + Sync {
     async fn get_addresses_for_user(&self, user_id: i32) -> Result<Vec<String>, eyre::Error>;
     async fn get_all_tracked_addresses(&self) -> Result<Vec<TrackedAddress>, eyre::Error>;
     async fn get_user_id_by_username(&self, username: &str) -> Result<i32, eyre::Error>;
-    async fn get_utxos_for_user_address(&self, user_id: i32, addresses: Vec<String>) -> Result<Vec<AddressUtxoResponse>, eyre::Error>;
+    async fn get_utxos_for_user_address(&self, addresses: Vec<String>) -> Result<Vec<AddressUtxoResponse>, eyre::Error>;
     async fn get_balance_for_user_addresses(&self, user_id: i32, addresses: Vec<String>) -> Result<Vec<BalanceResponse>, eyre::Error>;
-    async fn get_transaction_history_for_user_addresses(&self, user_id: i32, address: Vec<String>) -> Result<Vec<AddressUtxoResponse>, eyre::Error>;
+    async fn get_utxo_history_for_user_addresses(&self, address: Vec<String>) -> Result<Vec<AddressUtxoResponse>, eyre::Error>;
     async fn mark_utxo_spent(&self, txid: &str, vout_idx: i32) -> Result<(), eyre::Error>;
     async fn check_user_address_access(&self, user_id: i32, payload: AddressPayload) -> Result<bool, eyre::Error>;
-    async fn delete_transactions_and_utxos(&self, txids: Vec<TrackedAddress>, height: i32) -> Result<(), eyre::Error>;
-    async fn save_transaction_and_utxos(&self, tx: NewTransaction, utxos: Vec<UtxoResponse>) -> Result<(), eyre::Error>;
-    async fn get_last_indexed_height(&self) -> Result<u32, eyre::Error>;
-    async fn get_last_indexed_block_hash(&self, height: u32) -> Result<String, eyre::Error>;
-    
+    async fn delete_utxos(&self, txids: Vec<TrackedAddress>, height: i32) -> Result<(), eyre::Error>;
+    async fn save_utxos(&self, utxos: Vec<UtxoPayload>) -> Result<(), eyre::Error>;
+    async fn save_info(&self, height:u32, hash:String)->Result<(), eyre::Error>;
+    async fn get_info(&self, h: u32, has: BlockHash)->Result<InfoResponse, eyre::Error>;
 }
 
 #[async_trait]
@@ -137,23 +133,25 @@ impl DbRepository for PgRepository {
 
         Ok(user_id)
     }
-    async fn get_utxos_for_user_address(&self, user_id: i32, addresses: Vec<String>) -> Result<Vec<AddressUtxoResponse>, eyre::Error> {
+    async fn get_utxos_for_user_address(&self, addresses: Vec<String>) -> Result<Vec<AddressUtxoResponse>, eyre::Error> {
         let utxos = sqlx::query(
             r#"
             SELECT 
-                ta.address, 
-                u.txid, 
-                u.vout_idx, 
+                u.address, 
+                u.vout_idx,
+                u.txid,
+                u.block_hash,
+                u.vouts,
+                u.vins,
                 u.value, 
                 u.block_height
             FROM utxos u
             INNER JOIN tracked_addresses ta ON u.address_id = ta.address_id
-            WHERE ta.address = ANY($2) 
+            WHERE ta.address = ANY($1) 
                 AND u.is_spent = FALSE   
             ORDER BY u.block_height DESC NULLS FIRST, u.txid
             "#
         )
-        .bind(user_id)
         .bind(&addresses) 
         .fetch_all(&self.pool)
         .await?
@@ -161,8 +159,11 @@ impl DbRepository for PgRepository {
         .map(|row| {
                 AddressUtxoResponse {
                 address: row.get("address"),     
-                txid: row.get("txid"),                 
-                vout_idx: row.get("vout_idx"),               
+                txid: row.get("txid"), 
+                vout_idx: row.get("vout_idx"), 
+                block_hash: row.get("block_hash"), 
+                vouts: row.get("vins"), 
+                vins:  row.get("vouts"),         
                 value: row.get("value"),               
                 block_height: row.get("block_height"), 
                 is_spent: false,
@@ -193,39 +194,47 @@ impl DbRepository for PgRepository {
             }}).collect();
         Ok(balances)
     }
-    async fn get_transaction_history_for_user_addresses(&self, user_id: i32, addresses: Vec<String>) -> Result<Vec<AddressUtxoResponse>, eyre::Error> {
+    async fn get_utxo_history_for_user_addresses(&self, addresses: Vec<String>) -> Result<Vec<AddressUtxoResponse>, eyre::Error> {
         let history= sqlx::query(
-                r#"SELECT ta.address, u.txid, u.vout_idx, u.value, u.block_height, u.is_spent 
+                r#"SELECT u.address, 
+                          u.txid, 
+                          u.vout_idx,
+                          u.block_hash, 
+                          u.vouts, 
+                          u.vins, 
+                          u.value, 
+                          u.block_height, 
+                          u.is_spent 
                  FROM utxos u  
-                 INNER JOIN tracked_addresses ta ON u.address_id = ta.address_id
-                 WHERE ta.address = ANY($1) 
-                       AND ta.user_id = $2 
+                 WHERE u.address = ANY($1) 
                  ORDER BY u.block_height DESC NULLS FIRST, u.txid"#
             )
             .bind(&addresses)
-            .bind(user_id)
             .fetch_all(&self.pool)
             .await?
             .into_iter()
             .map(|row| {
                 AddressUtxoResponse {
-                address: row.get("address"),
-                txid: row.get("txid"),
+               address: row.get("address"),     
+                txid: row.get("txid"), 
                 vout_idx: row.get("vout_idx"), 
-                value: row.get("value"),
-                block_height: row.get("block_height"),
+                block_hash: row.get("block_hash"), 
+                vouts: row.get("vins"), 
+                vins:  row.get("vouts"),         
+                value: row.get("value"),               
+                block_height: row.get("block_height"), 
                 is_spent: row.get("is_spent"),
                 }}).collect();
         Ok(history)
     }
-    async fn delete_transactions_and_utxos(&self, txids: Vec<TrackedAddress>, height: i32) -> Result<(), eyre::Error> {
+    async fn delete_utxos(&self, txids: Vec<TrackedAddress>, height: i32) -> Result<(), eyre::Error> {
         if txids.is_empty() {
             return Ok(());
         }
         let list = txids.into_iter().map(|t| t.address).collect::<Vec<String>>();   
         let mut tx = self.pool.begin().await?;
         sqlx::query("DELETE 
-                     FROM transactions 
+                     FROM utxos 
                      WHERE txid = ANY($1) 
                         AND block_height >= $2")
             .bind(list)
@@ -255,74 +264,76 @@ impl DbRepository for PgRepository {
             Ok(false)
         }
     }
+    async fn save_utxos(&self, items: Vec<UtxoPayload>) -> Result<(), eyre::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        for item in items {
+            sqlx::query(
+                "INSERT INTO utxos (
+                    address_id, txid, vout_idx, block_hash, block_time, 
+                    vouts, vins, value, block_height, is_spent
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                ON CONFLICT (txid, vout_idx) DO NOTHING"
+            )
+            .bind(item.address_id)
+            .bind(&item.txid)
+            .bind(item.vout_idx) 
+            .bind(&item.block_hash)
+            .bind(item.block_time)
+            .bind(sqlx::types::Json(&item.vouts))
+            .bind(sqlx::types::Json(&item.vins))
+            .bind(item.value)
+            .bind(item.block_height)
+            .bind(false)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
     async fn mark_utxo_spent(&self, txid: &str, vout_idx: i32) -> Result<(), eyre::Error> {
         sqlx::query(
             "UPDATE utxos 
              SET is_spent = TRUE 
-             WHERE txid = $1 
-             AND vout_idx = $2"
-        )   
+             WHERE txid = $1 AND vout_idx = $2"
+        )
         .bind(txid)
         .bind(vout_idx)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
-    async fn save_transaction_and_utxos(&self, tx: NewTransaction, utxos: Vec<UtxoResponse>) -> Result<(), eyre::Error> {
-        let mut db_tx = self.pool.begin().await?;
-        sqlx::query(
-            "INSERT INTO transactions (txid, block_height, block_hash, block_time, vouts, vins)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (txid) DO NOTHING"
-        )
-        .bind(&tx.txid)
-        .bind(tx.block_height)
-        .bind(&tx.block_hash)
-        .bind(tx.block_time)
-        .bind(sqlx::types::Json(tx.vouts)) 
-        .bind(sqlx::types::Json(tx.vins))
-        .execute(&mut *db_tx)
-        .await?;
-        for item in utxos {
-            sqlx::query(
-                "INSERT INTO utxos (address_id, txid, vout_idx, value, block_height, is_spent)
-                 VALUES ($1, $2, $3, $4, $5, $6)
-                 ON CONFLICT (txid, vout_idx) DO NOTHING" 
-            )
-            .bind(item.address_id)
-            .bind(&item.txid)
-            .bind(item.vout_idx) 
-            .bind(item.value)
-            .bind(item.block_height)
-            .bind(item.is_spent)
-            .execute(&mut *db_tx)
+    async fn save_info(&self, height: u32, hash: String) -> Result<(), eyre::Error> {
+        sqlx::query("INSERT INTO info (height, block_hash) VALUES ($1, $2) ON CONFLICT (block_hash) DO NOTHING")
+            .bind(height as i32) 
+            .bind(hash)
+            .execute(&self.pool)
             .await?;
-        }
-        db_tx.commit().await?;
+
         Ok(())
     }
-    async fn get_last_indexed_height(&self) -> Result<u32, eyre::Error>{
-        let row = sqlx::query("SELECT MAX(block_height)
-                               FROM transactions")
-            .fetch_one(&self.pool)
-            .await?;
-        let max_height: Option<i32> = row.try_get(0)?;
-        Ok(max_height.unwrap_or(0) as u32)
-    }
-    async fn get_last_indexed_block_hash(&self, height: u32) -> Result<String, eyre::Error> {
-        const GENESIS_HASH: &str = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
-        let row_opt = sqlx::query("SELECT block_hash
-                                   FROM transactions 
-                                   WHERE block_height = $1")
-            .bind(height as i32)
+    async fn get_info(&self, h: u32, has: BlockHash) -> Result<InfoResponse, eyre::Error> {
+        let row_opt = sqlx::query("SELECT height, block_hash FROM info ORDER BY height DESC LIMIT 1")
             .fetch_optional(&self.pool)
             .await?;
         match row_opt {
             Some(row) => {
-                Ok(row.get("block_hash"))
+                let height: i32 = row.try_get("height")?;
+                let hash: String = row.try_get("block_hash")?;
+                Ok(InfoResponse {
+                    height: height as u32, 
+                    hash_rpc: hash.clone(),
+                    hash_p2p: BlockHash::from_str(&hash)?
+                })
             },
             None => {
-                Ok(GENESIS_HASH.to_string())
+                Ok(InfoResponse {
+                    height: h,
+                    hash_rpc: has.to_string(),
+                    hash_p2p: has,
+                })
             }
         }
     }

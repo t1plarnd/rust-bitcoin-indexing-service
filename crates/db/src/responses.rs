@@ -5,7 +5,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::FromRow;
-use sqlx::types::chrono;
 use tracing::error;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -41,40 +40,39 @@ pub struct BalanceResponse {
     pub balance: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TrackedAddress {
     pub address_id: i32,
     pub address: String,
-}
-
-#[derive(Debug)]
-pub struct NewTransaction {
-    pub txid: String,
-    pub block_height: Option<i32>,
-    pub block_hash: Option<String>,
-    pub block_time: Option<chrono::NaiveDateTime>,
-    pub vouts: Option<Vec<i32>>, 
-    pub vins: Option<Vec<i32>>,
-}
-
-#[derive(Debug, Serialize, Deserialize, FromRow)]
-pub struct UtxoResponse {
-    pub address_id: i32,
-    pub txid: String,
-    pub vout_idx: i32,
-    pub value: i64,
-    pub block_height: Option<i32>,
-    pub is_spent: bool,
 }
 
 #[derive(Debug, Serialize, FromRow)]
 pub struct AddressUtxoResponse {
     pub address: String,       
     pub txid: String,
-    pub vout_idx: i32,           
+    pub vout_idx: i32,
+    pub block_hash: String,
+    pub vouts: Option<sqlx::types::Json<Vec<TxOutputJson>>>, 
+    pub vins: Option<sqlx::types::Json<Vec<TxInputJson>>>,         
     pub value: i64,
     pub block_height: Option<i32>,
     pub is_spent: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TxInputJson {
+    pub txid: String,
+    pub vout: u32,
+    pub script_sig: String,
+    pub sequence: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TxOutputJson {
+    pub n: u32,
+    pub value: u64,
+    pub script_pubkey: String,
+    pub address: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

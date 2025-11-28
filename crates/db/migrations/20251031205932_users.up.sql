@@ -12,26 +12,30 @@ CREATE TABLE tracked_addresses (
     address VARCHAR(255) NOT NULL,
     UNIQUE(user_id, address)
 );
-CREATE TABLE transactions (
-    txid VARCHAR(64) PRIMARY KEY,
-    block_height INTEGER,
-    block_hash VARCHAR(64),
-    block_time TIMESTAMP,
-    vouts JSONB,
-    vins JSONB
+
+CREATE TABLE info(
+    block_hash VARCHAR(64) PRIMARY KEY,
+    height INTEGER
 );
+
+
 CREATE TABLE utxos (
     utxo_id SERIAL PRIMARY KEY,
     address_id INTEGER NOT NULL REFERENCES tracked_addresses(address_id) ON DELETE CASCADE,
-    txid VARCHAR(64) NOT NULL REFERENCES transactions(txid) ON DELETE CASCADE,
+    txid VARCHAR(64) NOT NULL,
     vout_idx INTEGER NOT NULL, 
+    block_hash VARCHAR(64),
+    block_time TIMESTAMP,
+    vouts JSONB NOT NULL, 
+    vins JSONB NOT NULL,  
     value BIGINT NOT NULL,
     block_height INTEGER,
     is_spent BOOLEAN NOT NULL DEFAULT FALSE,
-    UNIQUE(txid, vout_idx)
+    CONSTRAINT unique_utxo UNIQUE (txid, vout_idx)
 );
-CREATE INDEX idx_utxos_address ON utxos(address_id);
+CREATE INDEX idx_utxos_address_id ON utxos(address_id);
 CREATE INDEX idx_utxos_txid_vout ON utxos(txid, vout_idx);
+
 
 
 

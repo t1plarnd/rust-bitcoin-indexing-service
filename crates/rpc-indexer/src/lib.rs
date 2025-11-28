@@ -1,17 +1,23 @@
-use bitcoin::BlockHeader;
+use bitcoin::block::Header as BlockHeader;
 use eyre::Result;
 use bitcoin_hashes::{sha256d, Hash};
 use tracing::{info, error, warn};
-use db::responses::{NewTransaction, UtxoResponse};
 use db::models::{
     AppState, 
+    BlockstreamClient, 
     MerkleProof, 
-    BlockstreamClient};
+    UtxoPayload, 
+    VinJson, 
+    VoutJson};
+use db::responses::TrackedAddress;
+use sqlx::types::chrono::NaiveDateTime;
 
-pub async fn run_indexer(state: AppState) -> Result<()> {
-    let api = BlockstreamClient::new(state.config.network); 
-    let mut last_height = state.db_repo.get_last_indexed_height().await?; 
-    let mut last_block_hash = state.db_repo.get_last_indexed_block_hash(last_height).await?;
+pub async fn run_rpc_indexer(state: AppState) -> Result<()> {
+    info!("Starting P2P Indexer");
+    let api = BlockstreamClient::new();
+    let record = state.db_repo.get_info(state.config.last_height, state.config.last_height_hash).await?;
+    let mut last_height = record.height;
+    let mut last_block_hash = record.hash_rpc;
     let max_reorg_capacity= state.config.reorg_limit;
 
     loop {
@@ -22,20 +28,17 @@ pub async fn run_indexer(state: AppState) -> Result<()> {
             let header = api.get_block_header(&hash).await?;
             if header.prev_blockhash.to_string() != last_block_hash {
                 warn!("Blockchain reorganization detected at height {}", next_height);
+
                 let mut counter = 0;
                 let mut hash2 = header.prev_blockhash.to_string();
-                let hash2B = header.prev_blockhash.to_string();
+                let hash2_b = header.prev_blockhash.to_string();
                 let mut hash1 = last_block_hash;
 
                 while hash1 != hash2 {
-                    if counter == 6 {
-                        panic!("Reorg is bigger than {} blocks!!!", max_reorg_capacity);
-                        counter = 0;
-                        break;
-                    }
+                    if counter == 6 {panic!("Reorg is bigger than {} blocks!!!", max_reorg_capacity);}
                     counter+=1;
                     let mut extracoutner = 0;
-                    hash2 = hash2B.clone();
+                    hash2 = hash2_b.clone();
 
                     while hash1 != hash2{
                         if extracoutner == max_reorg_capacity{break;}
@@ -49,22 +52,23 @@ pub async fn run_indexer(state: AppState) -> Result<()> {
                     tokio::time::sleep(tokio::time::Duration::from_millis(228)).await;
                 }
                 let list = state.db_repo.get_all_tracked_addresses().await?;
-                state.db_repo.delete_transactions_and_utxos(list, counter as i32).await?;
+                state.db_repo.delete_utxos(list, counter as i32).await?;
                 last_height -= counter;
                 last_block_hash = api.get_block_hash(last_height).await?; 
                 continue;
             }
 
             let target = header.target();
-            if let Err(e) = header.validate_pow(&target) {
+            if let Err(e) = header.validate_pow(target) {
                 error!("Invalid PoW for block {}: {}", next_height, e);
                 tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
                 continue;
             }
 
             info!("Header {} is valid. Checking transactions...", next_height);
-            process_block(&state, &api, &hash, &header).await?;
-
+            let tracked_addresses = state.db_repo.get_all_tracked_addresses().await?;
+            process_block(&state, &api, &hash, &header, tracked_addresses).await?;
+            state.db_repo.save_info(last_height, last_block_hash).await?;
             last_height = next_height;
             last_block_hash = hash;
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -75,12 +79,8 @@ pub async fn run_indexer(state: AppState) -> Result<()> {
         }
     }
 }
-
-async fn process_block(state: &AppState, api: &BlockstreamClient, target_block_hash: &str, header: &BlockHeader) -> Result<()> {
-    
-    let addresses = state.db_repo.get_all_tracked_addresses().await?;
-    
-    for tracked_addr in addresses {
+async fn process_block(state: &AppState, api: &BlockstreamClient, target_block_hash: &str, header: &BlockHeader, tracked_addresses: Vec<TrackedAddress>) -> Result<()> {
+    for tracked_addr in tracked_addresses {
         let history = api.get_address_txs(&tracked_addr.address).await?;
         for tx in history {
             let is_in_this_block = match &tx.status.block_hash {
@@ -89,57 +89,64 @@ async fn process_block(state: &AppState, api: &BlockstreamClient, target_block_h
             };
             if !is_in_this_block { continue; }
 
-            info!("Found tx {} in block {}", tx.txid, target_block_hash);
             let proof = api.get_merkle_proof(&tx.txid).await?;
             let expected_root = header.merkle_root.to_string();
 
             if verify_merkle_proof(&tx.txid, &proof, &expected_root) {
-                info!("Merkle Proof Valid. Saving to DB.");
-                let vouts_indices: Vec<i32> = (0..tx.vout.len()).map(|i| i as i32).collect();
-                let vins_indices: Vec<i32> = tx.vin.iter().map(|v| v.vout as i32).collect();
-                let new_tx = NewTransaction {
-                    txid: tx.txid.clone(),
-                    block_height: tx.status.block_height,
-                    block_hash: tx.status.block_hash.clone(),
-                    block_time: tx.status.block_time.map(|t| 
-                        chrono::DateTime::from_timestamp(t, 0).unwrap().naive_utc()
-                    ),
-                    vouts: Some(vouts_indices), 
-                    vins: Some(vins_indices),
-                };
-                let mut utxos_to_save = Vec::new();
-                for (idx, vout_data) in tx.vout.iter().enumerate() {
-                    if let Some(addr) = &vout_data.scriptpubkey_address {
+                let json_vins: Vec<VinJson> = tx.vin.iter().map(|v| VinJson {
+                    txid: v.txid.clone(),
+                    vout: v.vout,
+                    scriptsig: v.scriptsig.clone(),
+                    sequence: v.sequence as u64,
+                }).collect();
+
+                let json_vouts: Vec<VoutJson> = tx.vout.iter().enumerate().map(|(i, v)| VoutJson {
+                    n: i,
+                    value: v.value,
+                    scriptpubkey: v.scriptpubkey.clone(),
+                    address: v.scriptpubkey_address.clone(),
+                }).collect();
+
+                let block_time = tx.status.block_time
+                        .map(|t| NaiveDateTime::from_timestamp_opt(t, 0).unwrap_or_default()).unwrap_or_default();
+                let block_height = tx.status.block_height.unwrap_or(0);
+                let mut list_to_save: Vec<UtxoPayload> = Vec::new();
+                for (idx, vout) in tx.vout.iter().enumerate() {
+                    if let Some(addr) = &vout.scriptpubkey_address {
                         if addr == &tracked_addr.address {
-                            utxos_to_save.push(UtxoResponse {
+                            
+                            list_to_save.push(UtxoPayload {
                                 address_id: tracked_addr.address_id,
                                 txid: tx.txid.clone(),
-                                vout_idx: idx as i32,   
-                                value: vout_data.value as i64, 
-                                block_height: tx.status.block_height,
-                                is_spent: false,
+                                vout_idx: idx as i32, 
+                                block_hash: target_block_hash.to_string(),
+                                block_time,
+                                vouts: json_vouts.clone(),
+                                vins: json_vins.clone(),
+                                value: vout.value as i64,
+                                block_height,
                             });
                         }
                     }
                 }
-                state.db_repo.save_transaction_and_utxos(new_tx, utxos_to_save).await?;
+
+                if !list_to_save.is_empty() {
+                    state.db_repo.save_utxos(list_to_save).await?;
+                }
                 for input in tx.vin {
                     if let Some(prevout) = &input.prevout {
                         if let Some(addr) = &prevout.scriptpubkey_address {
-                            if addr == &tracked_addr.address {
-                                state.db_repo.mark_utxo_spent(&input.txid, input.vout as i32).await?;
-                            }
+                             if addr == &tracked_addr.address {
+                                 state.db_repo.mark_utxo_spent(&input.txid, input.vout as i32).await?;
+                             }
                         }
                     }
                 }
-            } else {
-                error!("Merkle proof failed for tx {}", tx.txid);
             }
         }
     }
     Ok(())
 }
-
 fn verify_merkle_proof(txid_hex: &str, proof: &MerkleProof, expected_root_hex: &str) -> bool {
     let mut current_hash = hex::decode(txid_hex).unwrap();
     current_hash.reverse();

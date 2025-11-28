@@ -6,7 +6,8 @@ edition = "2024"
 [dependencies]
 api = {path = "../crates/api"}
 db = {path = "../crates/db"}
-indexer = {path = "../crates/indexer"}
+p2p-indexer = {path = "../crates/p2p-indexer"}
+rpc-indexer = {path = "../crates/rpc-indexer"}
 handling = {path = "../crates/handling"}
 
 tracing = { workspace = true }

@@ -1,5 +1,5 @@
 [package]
-name = "indexer"
+name = "rpc-indexer"
 version = "0.1.0"
 edition = "2024"
 
@@ -19,3 +19,4 @@ serde = { workspace = true }
 reqwest = { workspace = true }
 bitcoin_hashes = { workspace = true }
 hex = { workspace = true }
+sqlx = { workspace = true }

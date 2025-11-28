@@ -8,7 +8,10 @@ use axum::{
     Router};
 use eyre::Result;
 use jsonwebtoken::{decode, DecodingKey, Validation};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{
+    IpAddr, 
+    Ipv4Addr, 
+    SocketAddr};
 use handling::{
     login, 
     register, 
@@ -53,12 +56,7 @@ pub async fn run(app_state: AppState) -> Result<()> {
     axum::serve(listener, app).await?;
     Ok(())
 }
-
-pub async fn auth_middleware(
-    State(state): State<AppState>,
-    mut req: Request<Body>,
-    next: Next,
-) -> Result<Response, StatusCode> {
+pub async fn auth_middleware(State(state): State<AppState>, mut req: Request<Body>, next: Next,) -> Result<Response, StatusCode> {
     let auth_header = req.headers()
         .get(header::AUTHORIZATION)
         .and_then(|header| header.to_str().ok());

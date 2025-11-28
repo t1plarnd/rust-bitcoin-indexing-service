@@ -6,8 +6,46 @@ use sqlx::PgPool;
 use crate::DbRepository; 
 use eyre::Result;
 use reqwest::Client;
-use bitcoin::BlockHeader;
+use bitcoin::block::Header as BlockHeader;
 use bitcoin::consensus::deserialize as bitcoin_deserialize;
+use bitcoin::BlockHash;
+use std::str::FromStr;
+use sqlx::types::chrono;
+
+#[derive(Debug, Serialize, Clone)]
+pub struct VinJson {
+    pub txid: String,
+    pub vout: u32,
+    pub scriptsig: String,
+    pub sequence: u64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct VoutJson {
+    pub n: usize,
+    pub value: u64,
+    pub scriptpubkey: String,
+    pub address: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct UtxoPayload {
+    pub address_id: i32,
+    pub txid: String,
+    pub vout_idx: i32,
+    pub block_hash: String,
+    pub block_time: chrono::NaiveDateTime,
+    pub vouts: Vec<VoutJson>, 
+    pub vins: Vec<VinJson>,   
+    pub value: i64,           
+    pub block_height: i32,
+}
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct InfoResponse{
+    pub height: u32,
+    pub hash_rpc: String,
+    pub hash_p2p: BlockHash,
+}
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct MerkleProof {
@@ -52,23 +90,18 @@ pub struct Status {
 }
 
 pub struct BlockstreamClient {
-    base_url: String,
-    client: Client,
+    pub base_url: String,
+    pub client: Client,
 }
 
 impl BlockstreamClient {
-    pub fn new(network: bool) -> Self {
-        let base_url = if network {
-            "https://blockstream.info/api".to_string()
-        } else {
-            "https://blockstream.info/testnet/api".to_string()
-        };
+    pub fn new() -> Self {
+        let base_url =  "https://blockstream.info/api".to_string();
         Self {
             base_url,
             client: Client::new(),
         }
     }
-
     pub async fn get_tip_height(&self) -> Result<u32> {
         let url = format!("{}/blocks/tip/height", self.base_url);
         let response = self.client.get(&url).send().await?;
@@ -76,14 +109,12 @@ impl BlockstreamClient {
         let height: u32 = text.parse()?;
         Ok(height)
     }
-
     pub async fn get_block_hash(&self, height: u32) -> Result<String> {
         let url = format!("{}/block-height/{}", self.base_url, height);
         let response = self.client.get(&url).send().await?;
         let hash = response.text().await?;
         Ok(hash)
     }
-
     pub async fn get_block_header(&self, block_hash: &str) -> Result<BlockHeader> {
         let url = format!("{}/block/{}/header", self.base_url, block_hash);
         let hex_string = self.client.get(&url).send().await?.text().await?;
@@ -91,7 +122,6 @@ impl BlockstreamClient {
         let header: BlockHeader = bitcoin_deserialize(&bytes)?;
         Ok(header)
     }
-
     pub async fn get_address_txs(&self, address: &str) -> Result<Vec<TX>> {
         let url = format!("{}/address/{}/txs", self.base_url, address);
         let response = self.client.get(&url).send().await?;
@@ -101,7 +131,6 @@ impl BlockstreamClient {
         let txs = response.json::<Vec<TX>>().await?;
         Ok(txs)
     }
-
     pub async fn get_merkle_proof(&self, txid: &str) -> Result<MerkleProof> {
         let url = format!("{}/tx/{}/merkle-proof", self.base_url, txid);
         let proof = self.client.get(&url).send().await?.json::<MerkleProof>().await?;
@@ -138,8 +167,9 @@ pub struct Config {
     pub jwt_secret: String,
     pub port: u16,
     pub ip_musk: Option<String>,
-    pub network: bool,
     pub reorg_limit: u16,
+    pub last_height: u32,
+    pub last_height_hash: BlockHash,
     
 }
 
@@ -150,19 +180,18 @@ impl Config {
         let jwt_secret = env::var("JWT_STRING")?;
         let port: u16  = env::var("API_PORT")?.parse()?;
         let ip_musk = env::var("IP_MASK").ok();
-        let network: bool = match env::var("MAINNET") {
-            Ok(val) => val.parse().unwrap_or(true),
-            Err(_) => true,
-        };
         let reorg_limit: u16= env::var("MAX_REORG_CAPACITY")?.parse()?;
-
+        let last_height: u32 = env::var("LAST_HEIGHT")?.parse()?;
+        let last_height_hash_str = env::var("LAST_HEIGHT_HASH")?;
+        let last_height_hash = BlockHash::from_str(&last_height_hash_str)?;
         Ok(Config {
             database_url,
             jwt_secret,
             port,   
             ip_musk,  
-            network,
             reorg_limit,
+            last_height,
+            last_height_hash,
         })
     }
 }
