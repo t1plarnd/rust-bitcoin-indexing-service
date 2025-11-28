@@ -39,6 +39,7 @@ pub struct UtxoPayload {
     pub vins: Vec<VinJson>,   
     pub value: i64,           
     pub block_height: i32,
+    pub is_confirmed: bool,
 }
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct InfoResponse{
@@ -167,7 +168,7 @@ pub struct Config {
     pub jwt_secret: String,
     pub port: u16,
     pub ip_musk: Option<String>,
-    pub reorg_limit: u16,
+    pub reorg_limit: u32,
     pub last_height: u32,
     pub last_height_hash: BlockHash,
     
@@ -180,7 +181,7 @@ impl Config {
         let jwt_secret = env::var("JWT_STRING")?;
         let port: u16  = env::var("API_PORT")?.parse()?;
         let ip_musk = env::var("IP_MASK").ok();
-        let reorg_limit: u16= env::var("MAX_REORG_CAPACITY")?.parse()?;
+        let reorg_limit: u32= env::var("MAX_REORG_CAPACITY")?.parse()?;
         let last_height: u32 = env::var("LAST_HEIGHT")?.parse()?;
         let last_height_hash_str = env::var("LAST_HEIGHT_HASH")?;
         let last_height_hash = BlockHash::from_str(&last_height_hash_str)?;

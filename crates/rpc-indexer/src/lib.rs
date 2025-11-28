@@ -18,7 +18,7 @@ pub async fn run_rpc_indexer(state: AppState) -> Result<()> {
     let record = state.db_repo.get_info(state.config.last_height, state.config.last_height_hash).await?;
     let mut last_height = record.height;
     let mut last_block_hash = record.hash_rpc;
-    let max_reorg_capacity= state.config.reorg_limit;
+    let max_reorg_capacity: u32= state.config.reorg_limit;
 
     loop {
         let curr_height = api.get_tip_height().await?;
@@ -29,13 +29,13 @@ pub async fn run_rpc_indexer(state: AppState) -> Result<()> {
             if header.prev_blockhash.to_string() != last_block_hash {
                 warn!("Blockchain reorganization detected at height {}", next_height);
 
-                let mut counter = 0;
+                let mut counter: u32 = 0;
                 let mut hash2 = header.prev_blockhash.to_string();
                 let hash2_b = header.prev_blockhash.to_string();
                 let mut hash1 = last_block_hash;
 
                 while hash1 != hash2 {
-                    if counter == 6 {panic!("Reorg is bigger than {} blocks!!!", max_reorg_capacity);}
+                    if counter == max_reorg_capacity {panic!("Reorg is bigger than {} blocks!", max_reorg_capacity);}
                     counter+=1;
                     let mut extracoutner = 0;
                     hash2 = hash2_b.clone();
@@ -52,7 +52,7 @@ pub async fn run_rpc_indexer(state: AppState) -> Result<()> {
                     tokio::time::sleep(tokio::time::Duration::from_millis(228)).await;
                 }
                 let list = state.db_repo.get_all_tracked_addresses().await?;
-                state.db_repo.delete_utxos(list, counter as i32).await?;
+                state.db_repo.rollback_state(counter as u32).await?;
                 last_height -= counter;
                 last_block_hash = api.get_block_hash(last_height).await?; 
                 continue;
@@ -125,11 +125,11 @@ async fn process_block(state: &AppState, api: &BlockstreamClient, target_block_h
                                 vins: json_vins.clone(),
                                 value: vout.value as i64,
                                 block_height,
+                                is_confirmed: true,
                             });
                         }
                     }
                 }
-
                 if !list_to_save.is_empty() {
                     state.db_repo.save_utxos(list_to_save).await?;
                 }

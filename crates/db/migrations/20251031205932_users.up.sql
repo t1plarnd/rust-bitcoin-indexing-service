@@ -18,7 +18,6 @@ CREATE TABLE info(
     height INTEGER
 );
 
-
 CREATE TABLE utxos (
     utxo_id SERIAL PRIMARY KEY,
     address_id INTEGER NOT NULL REFERENCES tracked_addresses(address_id) ON DELETE CASCADE,
@@ -31,6 +30,7 @@ CREATE TABLE utxos (
     value BIGINT NOT NULL,
     block_height INTEGER,
     is_spent BOOLEAN NOT NULL DEFAULT FALSE,
+    is_confirmed BOOLEAN NOT NULL DEFAULT FALSE,
     CONSTRAINT unique_utxo UNIQUE (txid, vout_idx)
 );
 CREATE INDEX idx_utxos_address_id ON utxos(address_id);

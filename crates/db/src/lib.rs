@@ -29,10 +29,12 @@ pub trait DbRepository: Send + Sync {
     async fn get_utxo_history_for_user_addresses(&self, address: Vec<String>) -> Result<Vec<AddressUtxoResponse>, eyre::Error>;
     async fn mark_utxo_spent(&self, txid: &str, vout_idx: i32) -> Result<(), eyre::Error>;
     async fn check_user_address_access(&self, user_id: i32, payload: AddressPayload) -> Result<bool, eyre::Error>;
-    async fn delete_utxos(&self, txids: Vec<TrackedAddress>, height: i32) -> Result<(), eyre::Error>;
     async fn save_utxos(&self, utxos: Vec<UtxoPayload>) -> Result<(), eyre::Error>;
     async fn save_info(&self, height:u32, hash:String)->Result<(), eyre::Error>;
     async fn get_info(&self, h: u32, has: BlockHash)->Result<InfoResponse, eyre::Error>;
+
+    async fn get_info_by_hash(&self, hash: String) -> Result<InfoResponse, eyre::Error>;
+    async fn rollback_state(&self, height: u32) -> Result<(), eyre::Error>;
 }
 
 #[async_trait]
@@ -137,14 +139,16 @@ impl DbRepository for PgRepository {
         let utxos = sqlx::query(
             r#"
             SELECT 
-                u.address, 
+                u.address_id,
+                ta.address, 
                 u.vout_idx,
                 u.txid,
                 u.block_hash,
                 u.vouts,
                 u.vins,
                 u.value, 
-                u.block_height
+                u.block_height,
+                u.is_confirmed
             FROM utxos u
             INNER JOIN tracked_addresses ta ON u.address_id = ta.address_id
             WHERE ta.address = ANY($1) 
@@ -167,6 +171,7 @@ impl DbRepository for PgRepository {
                 value: row.get("value"),               
                 block_height: row.get("block_height"), 
                 is_spent: false,
+                is_confirmed: row.get("is_confirmed"),
             }}).collect();
         Ok(utxos)
     }
@@ -178,6 +183,7 @@ impl DbRepository for PgRepository {
             LEFT JOIN utxos u ON ta.address_id = u.address_id AND u.is_spent = FALSE
             WHERE ta.user_id = $1 
                 AND ta.address = ANY($2)
+                AND u.is_confirmed = TRUE
             GROUP BY ta.address
             "#
         )
@@ -196,7 +202,7 @@ impl DbRepository for PgRepository {
     }
     async fn get_utxo_history_for_user_addresses(&self, addresses: Vec<String>) -> Result<Vec<AddressUtxoResponse>, eyre::Error> {
         let history= sqlx::query(
-                r#"SELECT u.address, 
+                r#"SELECT ta.address, 
                           u.txid, 
                           u.vout_idx,
                           u.block_hash, 
@@ -204,9 +210,11 @@ impl DbRepository for PgRepository {
                           u.vins, 
                           u.value, 
                           u.block_height, 
-                          u.is_spent 
-                 FROM utxos u  
-                 WHERE u.address = ANY($1) 
+                          u.is_spent,
+                          u.is_confirmed
+                 FROM utxos u
+                 INNER JOIN tracked_addresses ta ON u.address_id = ta.address_id
+                 WHERE ta.address = ANY($1) 
                  ORDER BY u.block_height DESC NULLS FIRST, u.txid"#
             )
             .bind(&addresses)
@@ -215,7 +223,7 @@ impl DbRepository for PgRepository {
             .into_iter()
             .map(|row| {
                 AddressUtxoResponse {
-               address: row.get("address"),     
+                address: row.get("address"),     
                 txid: row.get("txid"), 
                 vout_idx: row.get("vout_idx"), 
                 block_hash: row.get("block_hash"), 
@@ -224,25 +232,9 @@ impl DbRepository for PgRepository {
                 value: row.get("value"),               
                 block_height: row.get("block_height"), 
                 is_spent: row.get("is_spent"),
+                is_confirmed: row.get("is_confirmed"),
                 }}).collect();
         Ok(history)
-    }
-    async fn delete_utxos(&self, txids: Vec<TrackedAddress>, height: i32) -> Result<(), eyre::Error> {
-        if txids.is_empty() {
-            return Ok(());
-        }
-        let list = txids.into_iter().map(|t| t.address).collect::<Vec<String>>();   
-        let mut tx = self.pool.begin().await?;
-        sqlx::query("DELETE 
-                     FROM utxos 
-                     WHERE txid = ANY($1) 
-                        AND block_height >= $2")
-            .bind(list)
-            .bind(height)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        Ok(())
     }
     async fn check_user_address_access(&self, user_id: i32, payload: AddressPayload) -> Result<bool, eyre::Error> {
         let counter = payload.addresses.len() as i64;
@@ -271,10 +263,15 @@ impl DbRepository for PgRepository {
             sqlx::query(
                 "INSERT INTO utxos (
                     address_id, txid, vout_idx, block_hash, block_time, 
-                    vouts, vins, value, block_height, is_spent
+                    vouts, vins, value, block_height, is_spent, is_confirmed
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                ON CONFLICT (txid, vout_idx) DO NOTHING"
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                ON CONFLICT (txid, vout_idx) 
+                DO UPDATE SET 
+                    is_confirmed = EXCLUDED.is_confirmed,
+                    block_height = EXCLUDED.block_height,
+                    block_hash = EXCLUDED.block_hash,
+                    block_time = EXCLUDED.block_time"
             )
             .bind(item.address_id)
             .bind(&item.txid)
@@ -286,6 +283,7 @@ impl DbRepository for PgRepository {
             .bind(item.value)
             .bind(item.block_height)
             .bind(false)
+            .bind(item.is_confirmed)
             .execute(&mut *tx)
             .await?;
         }
@@ -336,5 +334,32 @@ impl DbRepository for PgRepository {
                 })
             }
         }
+    }
+    async fn get_info_by_hash(&self, hash: String) -> Result<InfoResponse, eyre::Error> {
+        let row = sqlx::query("SELECT height, block_hash FROM info WHERE block_hash = $1")
+            .bind(&hash)
+            .fetch_one(&self.pool)
+            .await?;
+        let h: i32 = row.try_get("height")?;
+        let h_str: String = row.try_get("block_hash")?;
+    
+        Ok(InfoResponse {
+            height: h as u32,
+            hash_rpc: h_str.clone(),
+            hash_p2p: BlockHash::from_str(&h_str)?,
+        })
+    }
+    async fn rollback_state(&self, height: u32) -> Result<(), eyre::Error> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM utxos WHERE block_height > $1")
+            .bind(height as i32)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM info WHERE height > $1")
+            .bind(height as i32)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
     }
 }

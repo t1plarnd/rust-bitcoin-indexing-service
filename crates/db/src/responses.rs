@@ -57,6 +57,7 @@ pub struct AddressUtxoResponse {
     pub value: i64,
     pub block_height: Option<i32>,
     pub is_spent: bool,
+    pub is_confirmed: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
